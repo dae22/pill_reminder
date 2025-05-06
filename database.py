@@ -7,7 +7,7 @@ database = Database(DATABASE_URL)
 async def init_db():
     await database.execute(
         """
-        CREATE TABLE IF NOT EXIST users(
+        CREATE TABLE IF NOT EXISTS users(
             id SERIAL PRIMARY KEY,
             user_id BIGINT UNIQUE NOT NULL
             )
@@ -15,11 +15,13 @@ async def init_db():
     )
     await database.execute(
         """
-        CREATE TABLE IF NOT EXIST pills(
+        CREATE TABLE IF NOT EXISTS pills(
             id SERIAL PRIMARY KEY,
             user_id BIGINT REFERENCES users(user_id),
             name TEXT NOT NULL,
-            time TIME NOT NULL
+            time TIME NOT NULL,
+            is_taken BOOLEAN DEFAULT FALSE,
+            last_notified TIMESTAMP
             )
         """
     )
