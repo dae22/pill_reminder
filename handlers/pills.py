@@ -72,7 +72,7 @@ async def confirm_pill(callback: CallbackQuery):
     values = {"user_id": callback.from_user.id}
     await database.execute(query=query, values=values)
     await callback.message.delete()
-    await callback.answer("Прием таблетки подтвержден!")
+    await callback.answer("Прием таблетки подтвержден!") #Не подтверждается прием таблетки
 
 async def check_pills(bot: Bot):
     now = datetime.now().time().replace(second=0, microsecond=0)
@@ -81,11 +81,10 @@ async def check_pills(bot: Bot):
     pills = await database.fetch_all(query=query, values=values)
 
     for pill in pills:
-        await bot.send_message(
-            pill.user_id,
-            f"⏰ Пора принять {pill.name}!",
-            reply_markup=confirm_keyboard
-        )
+        await bot.send_message(pill.user_id, f"⏰ Пора принять {pill.name}!", reply_markup=confirm_keyboard) #Нет повторного уведомления о необходимости приема
         query = "UPDATE pills SET last_notified = NOW() WHERE id = :id"
         values = {"id": pill.id}
         await database.execute(query=query, values=values)
+
+
+pass #Добавить кнопку удалить таблетку
