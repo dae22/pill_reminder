@@ -1,4 +1,5 @@
-from aiogram import Router, Bot, F
+import logging
+from aiogram import Router, Bot, F, types
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -6,9 +7,10 @@ from datetime import datetime, time
 import re
 
 from database import database
-from keyboard import confirm_keyboard, main_keyboard
+from keyboard import *
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 class AddPillStates(StatesGroup):
     entering_name = State()
@@ -41,14 +43,10 @@ async def process_time(message: Message, state: FSMContext):
     await state.clear()
 
     async with database.transaction():
-        query_user = "INSERT INTO users(user_id) VALUES(:user_id) ON CONFLICT DO NOTHING"
-        values_user = {"user_id": message.from_user.id}
-        await database.execute(query=query_user, values=values_user)
-
-        query_pill = "INSERT INTO pills(user_id, name, time) VALUES(:user_id, :name, :time)"
+        query_pill = "INSERT INTO pills(user_id, name, time) VALUES(:user_id, :name, :time) RETURNING id"
         values_pill = {"user_id": message.from_user.id, "name": data['name'], "time": time_obj}
-        await database.execute(query=query_pill, values=values_pill)
-
+        pill_id = await database.execute(query=query_pill, values=values_pill)
+        logger.info(f'Добавлена новая таблетка ID: {pill_id}')
         await message.answer(f"✅ {data['name']} добавлено на {message.text}", reply_markup=main_keyboard)
 
 @router.message(F.text == "Список моих таблеток")
@@ -66,25 +64,54 @@ async def list_pills(message: Message):
     )
     await message.answer(response)
 
-@router.callback_query(F.text == "confirm")
-async def confirm_pill(callback: CallbackQuery):
-    query = "UPDATE pills SET is_taken = TRUE WHERE user_id = :user_id"
-    values = {"user_id": callback.from_user.id}
-    await database.execute(query=query, values=values)
-    await callback.message.delete()
-    await callback.answer("Прием таблетки подтвержден!") #Не подтверждается прием таблетки
+@router.callback_query()
+async def confirm_pill(callback: types.CallbackQuery):
+    logger.debug(f"Получен callback: {callback.data}")
+    
+    _, pill_id = callback.data.split("_")
+    pill_id = int(pill_id)
+    logger.info(f'Попытка подтверждения ID: {pill_id}')
+    async with database.transaction():
+        query = """
+                UPDATE pills 
+                SET last_taken = CURRENT_DATE
+                WHERE id = :id
+                AND (last_taken IS NULL OR last_taken < CURRENT_DATE)
+                RETURNING name
+                """
+        values = {"id": pill_id}
+        updated = await database.execute(query=query, values=values)
+        if updated:
+            await callback.message.edit_text(
+                f"✅ Прием {updated} подтверждён",
+                reply_markup=None
+            )
+            await callback.answer()
+            logger.info(f'Подтверждение прием ID: {pill_id}')
 
 async def check_pills(bot: Bot):
     now = datetime.now().time().replace(second=0, microsecond=0)
-    query = "SELECT * FROM pills WHERE time = :time AND (last_notified IS NULL OR last_notified < NOW() - INTERVAL '5 minutes') AND is_taken = FALSE"
+    logger.info(f'Проверка уведомлений в {now}')
+    query = """
+            SELECT * FROM pills 
+            WHERE time <= :time 
+            AND (last_taken IS NULL OR last_taken < CURRENT_DATE)
+            AND (last_notified IS NULL OR last_notified <= NOW() - INTERVAL '5 minutes')
+            """
     values = {"time": now}
     pills = await database.fetch_all(query=query, values=values)
+    logger.info(f'Найдено {len(pills)} таблеток для уведомлений')
 
     for pill in pills:
-        await bot.send_message(pill.user_id, f"⏰ Пора принять {pill.name}!", reply_markup=confirm_keyboard) #Нет повторного уведомления о необходимости приема
+        await bot.send_message(
+            pill.user_id,
+            f"⏰ Пора принять {pill.name}!",
+            reply_markup=confirm_keyboard(pill.id)
+        )
         query = "UPDATE pills SET last_notified = NOW() WHERE id = :id"
         values = {"id": pill.id}
         await database.execute(query=query, values=values)
+        logger.info(f' Уведомление отправлено для таблетки ID: {pill.id}')
 
 
 pass #Добавить кнопку удалить таблетку
