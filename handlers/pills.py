@@ -1,4 +1,6 @@
 import logging
+from email.policy import default
+
 from aiogram import Router, Bot, F, types
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -15,6 +17,9 @@ logger = logging.getLogger(__name__)
 class AddPillStates(StatesGroup):
     entering_name = State()
     entering_time = State()
+
+class DeletePillStates(StatesGroup):
+    selecting_pill = State()
 
 @router.message(F.text == "Добавить таблетку")
 async def add_pill_start(message: Message, state: FSMContext):
@@ -49,6 +54,18 @@ async def process_time(message: Message, state: FSMContext):
         logger.info(f'Добавлена новая таблетка ID: {pill_id}')
         await message.answer(f"✅ {data['name']} добавлено на {message.text}", reply_markup=main_keyboard)
 
+@router.message(F.text == "Удалить таблетку")
+async def delete_pill(message: Message, state: FSMContext):
+    query = "SELECT * FROM pills WHERE user_id = :user_id"
+    values = {"user_id": message.from_user.id}
+    pills = await database.fetch_all(query=query, values=values)
+
+    if not pills:
+        await message.answer("У вас нет добавленных таблеток")
+        return
+    await state.set_state(DeletePillStates.selecting_pill)
+    await message.answer("Выберите лекарство для удаления:", reply_markup=delete_keyboard(pills))
+
 @router.message(F.text == "Список моих таблеток")
 async def list_pills(message: Message):
     query = "SELECT name, time FROM pills WHERE user_id = :user_id"
@@ -64,12 +81,11 @@ async def list_pills(message: Message):
     )
     await message.answer(response)
 
-@router.callback_query()
+@router.callback_query(F.data.startwith("confirm"))
 async def confirm_pill(callback: types.CallbackQuery):
     logger.debug(f"Получен callback: {callback.data}")
     
-    _, pill_id = callback.data.split("_")
-    pill_id = int(pill_id)
+    pill_id = int(callback.data.split("_")[1])
     logger.info(f'Попытка подтверждения ID: {pill_id}')
     async with database.transaction():
         query = """
@@ -88,6 +104,17 @@ async def confirm_pill(callback: types.CallbackQuery):
             )
             await callback.answer()
             logger.info(f'Подтверждение прием ID: {pill_id}')
+
+@router.callback_query(F.data.startwith("delete"), DeletePillStates.selecting_pill)
+async def delete_pill_handler(callback: types.CallbackQuery, state: FSMContext):
+    logger.debug(f"Получен callback: {callback.data}")
+
+    pill_id = int(callback.data.split("_")[1])
+    query = "DELETE FROM pills WHERE id = :id RETURNING name"
+    values = {"id": pill_id}
+    deleted_pill = await database.execute(query=query, values=values)
+    await callback.message.edit_text(f'✅ {deleted_pill} удален')
+    await state.clear()
 
 async def check_pills(bot: Bot):
     now = datetime.now().time().replace(second=0, microsecond=0)
@@ -112,6 +139,3 @@ async def check_pills(bot: Bot):
         values = {"id": pill.id}
         await database.execute(query=query, values=values)
         logger.info(f' Уведомление отправлено для таблетки ID: {pill.id}')
-
-
-pass #Добавить кнопку удалить таблетку

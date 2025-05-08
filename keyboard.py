@@ -18,3 +18,13 @@ def confirm_keyboard(pill_id: int):
         callback_data=f'confirm_{pill_id}'
     )
     return builder.as_markup()
+
+def delete_keyboard(pills: list):
+    builder = InlineKeyboardBuilder()
+    for pill in pills:
+        builder.button(
+            text=f'❌ {pill.name}',
+            callback_data=f'delete_{pill.id}'
+        )
+    builder.adjust(1)
+    return builder.as_markup()
